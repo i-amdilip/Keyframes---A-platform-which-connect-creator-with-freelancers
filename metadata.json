@@ -1,0 +1,6 @@
+{
+  "name": "Crestline",
+  "description": "Creator and freelancer collaboration marketplace connecting content creators with video editors, thumbnail designers, motion artists, and scriptwriters.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

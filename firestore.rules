@@ -1,0 +1,577 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection health check document
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Global hardened primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'iamberlin17@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'accountStatus', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'accountStatus', 'avatarUrl', 'bio', 'channelName', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.role in ['creator', 'freelancer']
+        && data.accountStatus in ['active', 'suspended']
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 500))
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 1000))
+        && (!('channelName' in data) || (data.channelName is string && data.channelName.size() <= 120))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminMember(data) {
+      return data.keys().hasAll(['uid', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && isValidId(data.uid)
+        && (!('email' in data) || (data.email is string && data.email.size() <= 200))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFreelancerProfile(data) {
+      return data.keys().hasAll(['uid', 'name', 'headline', 'bio', 'category', 'skills', 'startingPrice', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'name', 'headline', 'bio', 'category', 'skills', 'startingPrice', 'hourlyRate', 'rating', 'reviewCount', 'completedOrders', 'avatarUrl', 'coverUrl', 'portfolioItems', 'packages', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.headline is string && data.headline.size() >= 4 && data.headline.size() <= 160
+        && data.bio is string && data.bio.size() >= 10 && data.bio.size() <= 2000
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 80
+        && data.skills is list && data.skills.size() >= 1 && data.skills.size() <= 10 && data.skills[0] is string
+        && data.startingPrice is number && data.startingPrice >= 5 && data.startingPrice <= 100000
+        && (!('hourlyRate' in data) || (data.hourlyRate is number && data.hourlyRate >= 5 && data.hourlyRate <= 10000))
+        && (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5))
+        && (!('reviewCount' in data) || (data.reviewCount is number && data.reviewCount >= 0))
+        && (!('completedOrders' in data) || (data.completedOrders is number && data.completedOrders >= 0))
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 500))
+        && (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 500))
+        && (!('portfolioItems' in data) || (data.portfolioItems is list && data.portfolioItems.size() <= 8 && (data.portfolioItems.size() == 0 || data.portfolioItems[0] is map)))
+        && (!('packages' in data) || (data.packages is list && data.packages.size() <= 3 && (data.packages.size() == 0 || data.packages[0] is map)))
+        && data.status in ['active', 'suspended']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['creatorUid', 'creatorName', 'title', 'description', 'category', 'requiredSkills', 'budget', 'deadline', 'status', 'proposalCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['creatorUid', 'creatorName', 'title', 'description', 'category', 'requiredSkills', 'budget', 'deadline', 'referenceUrl', 'status', 'proposalCount', 'createdAt', 'updatedAt'])
+        && isValidId(data.creatorUid)
+        && data.creatorName is string && data.creatorName.size() >= 1 && data.creatorName.size() <= 100
+        && data.title is string && data.title.size() >= 5 && data.title.size() <= 160
+        && data.description is string && data.description.size() >= 15 && data.description.size() <= 3000
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 80
+        && data.requiredSkills is list && data.requiredSkills.size() >= 1 && data.requiredSkills.size() <= 10 && data.requiredSkills[0] is string
+        && data.budget is number && data.budget >= 10 && data.budget <= 500000
+        && data.deadline is string && data.deadline.size() >= 4 && data.deadline.size() <= 40
+        && (!('referenceUrl' in data) || (data.referenceUrl is string && data.referenceUrl.size() <= 500))
+        && data.status in ['open', 'in_progress', 'completed', 'cancelled']
+        && data.proposalCount is number && data.proposalCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProposal(data) {
+      return data.keys().hasAll(['projectId', 'projectTitle', 'creatorUid', 'freelancerUid', 'freelancerName', 'proposedPrice', 'deliveryDays', 'coverMessage', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['projectId', 'projectTitle', 'creatorUid', 'freelancerUid', 'freelancerName', 'freelancerHeadline', 'proposedPrice', 'deliveryDays', 'coverMessage', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.projectId)
+        && data.projectTitle is string && data.projectTitle.size() >= 1 && data.projectTitle.size() <= 160
+        && isValidId(data.creatorUid)
+        && isValidId(data.freelancerUid)
+        && data.freelancerName is string && data.freelancerName.size() >= 1 && data.freelancerName.size() <= 100
+        && (!('freelancerHeadline' in data) || (data.freelancerHeadline is string && data.freelancerHeadline.size() <= 160))
+        && data.proposedPrice is number && data.proposedPrice >= 5 && data.proposedPrice <= 500000
+        && data.deliveryDays is number && data.deliveryDays >= 1 && data.deliveryDays <= 365
+        && data.coverMessage is string && data.coverMessage.size() >= 10 && data.coverMessage.size() <= 2000
+        && data.status in ['pending', 'accepted', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['title', 'category', 'creatorUid', 'creatorName', 'freelancerUid', 'freelancerName', 'price', 'platformFee', 'netPayout', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['projectId', 'proposalId', 'title', 'category', 'creatorUid', 'creatorName', 'freelancerUid', 'freelancerName', 'price', 'platformFee', 'netPayout', 'deadline', 'status', 'deliveryUrl', 'deliveryNotes', 'revisionNote', 'createdAt', 'updatedAt'])
+        && (!('projectId' in data) || isValidId(data.projectId))
+        && (!('proposalId' in data) || isValidId(data.proposalId))
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 160
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 80
+        && isValidId(data.creatorUid)
+        && data.creatorName is string && data.creatorName.size() >= 1 && data.creatorName.size() <= 100
+        && isValidId(data.freelancerUid)
+        && data.freelancerName is string && data.freelancerName.size() >= 1 && data.freelancerName.size() <= 100
+        && data.price is number && data.price >= 5 && data.price <= 500000
+        && data.platformFee is number && data.platformFee >= 0
+        && data.netPayout is number && data.netPayout >= 0
+        && (!('deadline' in data) || (data.deadline is string && data.deadline.size() <= 40))
+        && data.status in ['ordered', 'in_progress', 'delivered', 'revision_requested', 'completed', 'cancelled']
+        && (!('deliveryUrl' in data) || (data.deliveryUrl is string && data.deliveryUrl.size() <= 500))
+        && (!('deliveryNotes' in data) || (data.deliveryNotes is string && data.deliveryNotes.size() <= 2000))
+        && (!('revisionNote' in data) || (data.revisionNote is string && data.revisionNote.size() <= 1000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['participantUids', 'creatorUid', 'creatorName', 'freelancerUid', 'freelancerName', 'unreadByCreator', 'unreadByFreelancer', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['participantUids', 'creatorUid', 'creatorName', 'freelancerUid', 'freelancerName', 'projectId', 'projectTitle', 'lastMessage', 'lastSenderUid', 'unreadByCreator', 'unreadByFreelancer', 'createdAt', 'updatedAt'])
+        && data.participantUids is list && data.participantUids.size() == 2 && data.participantUids[0] is string && data.participantUids[1] is string
+        && isValidId(data.creatorUid)
+        && data.creatorName is string && data.creatorName.size() >= 1 && data.creatorName.size() <= 100
+        && isValidId(data.freelancerUid)
+        && data.freelancerName is string && data.freelancerName.size() >= 1 && data.freelancerName.size() <= 100
+        && (!('projectId' in data) || (data.projectId is string && data.projectId.size() <= 128))
+        && (!('projectTitle' in data) || (data.projectTitle is string && data.projectTitle.size() <= 160))
+        && (!('lastMessage' in data) || (data.lastMessage is string && data.lastMessage.size() <= 500))
+        && (!('lastSenderUid' in data) || (data.lastSenderUid is string && data.lastSenderUid.size() <= 128))
+        && data.unreadByCreator is bool
+        && data.unreadByFreelancer is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['conversationId', 'participantUids', 'senderUid', 'senderName', 'body', 'createdAt'])
+        && data.keys().hasOnly(['conversationId', 'participantUids', 'senderUid', 'senderName', 'body', 'attachmentName', 'attachmentUrl', 'createdAt'])
+        && isValidId(data.conversationId)
+        && data.participantUids is list && data.participantUids.size() == 2 && data.participantUids[0] is string && data.participantUids[1] is string
+        && isValidId(data.senderUid)
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 100
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 3000
+        && (!('attachmentName' in data) || (data.attachmentName is string && data.attachmentName.size() <= 200))
+        && (!('attachmentUrl' in data) || (data.attachmentUrl is string && data.attachmentUrl.size() <= 500))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['orderId', 'freelancerId', 'freelancerUid', 'creatorUid', 'creatorName', 'rating', 'comment', 'createdAt'])
+        && data.keys().hasOnly(['orderId', 'freelancerId', 'freelancerUid', 'creatorUid', 'creatorName', 'rating', 'comment', 'createdAt'])
+        && isValidId(data.orderId)
+        && isValidId(data.freelancerId)
+        && isValidId(data.freelancerUid)
+        && isValidId(data.creatorUid)
+        && data.creatorName is string && data.creatorName.size() >= 1 && data.creatorName.size() <= 100
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() >= 5 && data.comment.size() <= 1500
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPaymentRecord(data) {
+      return data.keys().hasAll(['orderTitle', 'freelancerUid', 'grossAmount', 'platformCommission', 'netAmount', 'type', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['orderId', 'orderTitle', 'creatorUid', 'freelancerUid', 'grossAmount', 'platformCommission', 'netAmount', 'type', 'status', 'payoutMethod', 'createdAt', 'updatedAt'])
+        && (!('orderId' in data) || isValidId(data.orderId))
+        && data.orderTitle is string && data.orderTitle.size() >= 1 && data.orderTitle.size() <= 160
+        && (!('creatorUid' in data) || isValidId(data.creatorUid))
+        && isValidId(data.freelancerUid)
+        && data.grossAmount is number && data.grossAmount >= 1 && data.grossAmount <= 500000
+        && data.platformCommission is number && data.platformCommission >= 0
+        && data.netAmount is number && data.netAmount >= 0
+        && data.type in ['order_record', 'withdrawal']
+        && data.status in ['pending', 'held', 'released', 'requested', 'paid']
+        && (!('payoutMethod' in data) || (data.payoutMethod is string && data.payoutMethod.size() <= 120))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['recipientUid', 'title', 'body', 'read', 'createdAt'])
+        && data.keys().hasOnly(['recipientUid', 'title', 'body', 'linkTab', 'read', 'createdAt'])
+        && isValidId(data.recipientUid)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 400
+        && (!('linkTab' in data) || (data.linkTab is string && data.linkTab.size() <= 60))
+        && data.read is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['reporterUid', 'targetType', 'targetId', 'targetName', 'reason', 'status', 'createdAt'])
+        && data.keys().hasOnly(['reporterUid', 'targetType', 'targetId', 'targetName', 'reason', 'status', 'createdAt'])
+        && isValidId(data.reporterUid)
+        && data.targetType in ['freelancer', 'project']
+        && isValidId(data.targetId)
+        && data.targetName is string && data.targetName.size() >= 1 && data.targetName.size() <= 160
+        && data.reason is string && data.reason.size() >= 5 && data.reason.size() <= 1000
+        && data.status in ['open', 'resolved', 'dismissed']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['name', 'slug', 'active', 'createdAt'])
+        && data.keys().hasOnly(['name', 'slug', 'description', 'active', 'createdAt'])
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
+        && data.slug is string && data.slug.size() >= 2 && data.slug.size() <= 80
+        && (!('description' in data) || (data.description is string && data.description.size() <= 300))
+        && data.active is bool
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // 1. Users (PII isolated to owner or admin; role restricted to creator/freelancer)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUserAccount(incoming())
+        && request.auth.uid == userId
+        && incoming().uid == userId
+        && incoming().accountStatus == 'active'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUserAccount(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            request.auth.uid == userId
+            && incoming().accountStatus == existing().accountStatus
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role', 'avatarUrl', 'bio', 'channelName', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // 2. Admins registry
+    match /admins/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidId(userId);
+    }
+
+    // 3. Public Freelancer Profiles
+    match /freelancers/{freelancerId} {
+      allow get: if isValidId(freelancerId);
+      allow list: if true;
+      allow create: if isVerifiedUser()
+        && isValidId(freelancerId)
+        && isValidFreelancerProfile(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().status == 'active'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(freelancerId)
+        && isValidFreelancerProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().uid == request.auth.uid
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'headline', 'bio', 'category', 'skills', 'startingPrice', 'hourlyRate', 'avatarUrl', 'coverUrl', 'portfolioItems', 'packages', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(freelancerId) && (isAdmin() || (isVerifiedUser() && existing().uid == request.auth.uid));
+    }
+
+    // 4. Projects Marketplace
+    match /projects/{projectId} {
+      allow get: if isValidId(projectId);
+      allow list: if true;
+      allow create: if isVerifiedUser()
+        && isValidId(projectId)
+        && isValidProject(incoming())
+        && incoming().creatorUid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().proposalCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(projectId)
+        && isValidProject(incoming())
+        && incoming().creatorUid == existing().creatorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().creatorUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'category', 'requiredSkills', 'budget', 'deadline', 'referenceUrl', 'status', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(projectId) && (isAdmin() || (isVerifiedUser() && existing().creatorUid == request.auth.uid));
+    }
+
+    // 5. Proposals (Private to submitting freelancer, target creator, or admin)
+    match /proposals/{proposalId} {
+      allow get: if isSignedIn() && isValidId(proposalId) && (
+        existing().freelancerUid == request.auth.uid ||
+        existing().creatorUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().freelancerUid == request.auth.uid ||
+        existing().creatorUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isVerifiedUser()
+        && isValidId(proposalId)
+        && isValidProposal(incoming())
+        && incoming().freelancerUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.creatorUid == incoming().creatorUid;
+      allow update: if isVerifiedUser()
+        && isValidId(proposalId)
+        && isValidProposal(incoming())
+        && incoming().projectId == existing().projectId
+        && incoming().creatorUid == existing().creatorUid
+        && incoming().freelancerUid == existing().freelancerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().status == 'pending'
+            && existing().creatorUid == request.auth.uid
+            && incoming().status in ['accepted', 'rejected']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(proposalId) && (isAdmin() || (isVerifiedUser() && existing().freelancerUid == request.auth.uid && existing().status == 'pending'));
+    }
+
+    // 6. Collaboration Orders (Workflow + Terminal State Locking)
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (
+        existing().creatorUid == request.auth.uid ||
+        existing().freelancerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().creatorUid == request.auth.uid ||
+        existing().freelancerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isVerifiedUser()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && incoming().creatorUid == request.auth.uid
+        && incoming().status == 'ordered'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && incoming().creatorUid == existing().creatorUid
+        && incoming().freelancerUid == existing().freelancerUid
+        && incoming().price == existing().price
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().status != 'completed' && existing().status != 'cancelled' && (
+              (
+                existing().freelancerUid == request.auth.uid
+                && incoming().status in ['in_progress', 'delivered']
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'deliveryUrl', 'deliveryNotes', 'updatedAt'])
+              ) ||
+              (
+                existing().creatorUid == request.auth.uid
+                && incoming().status in ['revision_requested', 'completed', 'cancelled']
+                && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'revisionNote', 'updatedAt'])
+              )
+            )
+          )
+        );
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+
+    // 7. Messaging Conversations + Messages Subcollection
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && isValidId(conversationId) && (
+        request.auth.uid in existing().participantUids || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        request.auth.uid in existing().participantUids || isAdmin()
+      );
+      allow create: if isVerifiedUser()
+        && isValidId(conversationId)
+        && isValidConversation(incoming())
+        && request.auth.uid in incoming().participantUids
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(conversationId)
+        && isValidConversation(incoming())
+        && incoming().participantUids == existing().participantUids
+        && incoming().creatorUid == existing().creatorUid
+        && incoming().freelancerUid == existing().freelancerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            request.auth.uid in existing().participantUids
+            && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastSenderUid', 'unreadByCreator', 'unreadByFreelancer', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(conversationId);
+
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(conversationId) && isValidId(messageId) && (
+          request.auth.uid in existing().participantUids || isAdmin()
+        );
+        allow list: if isSignedIn() && isValidId(conversationId) && (
+          request.auth.uid in existing().participantUids || isAdmin()
+        );
+        allow create: if isVerifiedUser()
+          && isValidId(conversationId)
+          && isValidId(messageId)
+          && isValidMessage(incoming())
+          && incoming().conversationId == conversationId
+          && incoming().senderUid == request.auth.uid
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/conversations/$(conversationId))
+          && incoming().participantUids == get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantUids
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantUids;
+        allow update, delete: if isAdmin() && isValidId(conversationId) && isValidId(messageId);
+      }
+    }
+
+    // 8. Verified Order Reviews
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if true;
+      allow create: if isVerifiedUser()
+        && isValidId(reviewId)
+        && isValidReview(incoming())
+        && incoming().creatorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/orders/$(incoming().orderId))
+        && get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.creatorUid == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(incoming().orderId)).data.status == 'completed';
+      allow update, delete: if isAdmin() && isValidId(reviewId);
+    }
+
+    // 9. Payments, Commissions & Withdrawals
+    match /payments/{paymentId} {
+      allow get: if isSignedIn() && isValidId(paymentId) && (
+        existing().creatorUid == request.auth.uid ||
+        existing().freelancerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().creatorUid == request.auth.uid ||
+        existing().freelancerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isVerifiedUser()
+        && isValidId(paymentId)
+        && isValidPaymentRecord(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (incoming().type == 'order_record' && incoming().creatorUid == request.auth.uid && incoming().status in ['pending', 'held']) ||
+          (incoming().type == 'withdrawal' && incoming().freelancerUid == request.auth.uid && incoming().status == 'requested')
+        );
+      allow update: if isVerifiedUser()
+        && isValidId(paymentId)
+        && isValidPaymentRecord(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().type == 'order_record'
+            && existing().status == 'held'
+            && existing().creatorUid == request.auth.uid
+            && incoming().status == 'released'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(paymentId);
+    }
+
+    // 10. Notifications
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && isValidId(notificationId) && (
+        existing().recipientUid == request.auth.uid || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        existing().recipientUid == request.auth.uid || isAdmin()
+      );
+      allow create: if isVerifiedUser()
+        && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && incoming().read == false
+        && incoming().createdAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && existing().recipientUid == request.auth.uid
+        && incoming().recipientUid == existing().recipientUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isValidId(notificationId) && (isAdmin() || (isVerifiedUser() && existing().recipientUid == request.auth.uid));
+    }
+
+    // 11. Moderation Reports (Admin-only review)
+    match /reports/{reportId} {
+      allow get, list: if isAdmin();
+      allow create: if isVerifiedUser()
+        && isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().reporterUid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if isAdmin() && isValidId(reportId);
+    }
+
+    // 12. Categories
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId);
+      allow list: if true;
+      allow create, update, delete: if isAdmin() && isValidId(categoryId);
+    }
+  }
+}
